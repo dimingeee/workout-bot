@@ -67,6 +67,17 @@ export async function getRosterUserIds(slack, channelId) {
 const DATE_TIME_REGEX =
   /(\d{1,2})\s*월\s*(\d{1,2})\s*일?[\s\S]{0,25}?(오전|오후)\s*(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?/;
 
+// OCR이 ":" 기호를 못 읽어서 "10:26"이 "1026"처럼 붙어버리는 경우를 위한 백업 패턴
+const DATE_TIME_NOCOLON_REGEX =
+  /(\d{1,2})\s*월\s*(\d{1,2})\s*일?[\s\S]{0,25}?(오전|오후)\s*(\d{3,4})(?!\d)/;
+
+function splitNoColonTime(digits) {
+  if (digits.length === 3) {
+    return { h: +digits.slice(0, 1), mi: +digits.slice(1) };
+  }
+  return { h: +digits.slice(0, 2), mi: +digits.slice(2) };
+}
+
 function normalizeOcrText(text) {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -82,18 +93,35 @@ function applyAmPm(hRaw, ampm) {
 
 function parseTimestampText(text) {
   const normalized = normalizeOcrText(text);
-  const m = normalized.match(DATE_TIME_REGEX);
-  if (!m) return null;
 
-  const [, mo, d, ampm, hRaw, mi, s] = m;
-  return {
-    y: DEFAULT_YEAR,
-    mo: +mo,
-    d: +d,
-    h: applyAmPm(hRaw, ampm),
-    mi: +mi,
-    s: +(s || 0),
-  };
+  const m = normalized.match(DATE_TIME_REGEX);
+  if (m) {
+    const [, mo, d, ampm, hRaw, mi, s] = m;
+    return {
+      y: DEFAULT_YEAR,
+      mo: +mo,
+      d: +d,
+      h: applyAmPm(hRaw, ampm),
+      mi: +mi,
+      s: +(s || 0),
+    };
+  }
+
+  const nc = normalized.match(DATE_TIME_NOCOLON_REGEX);
+  if (nc) {
+    const [, mo, d, ampm, digits] = nc;
+    const { h: hRaw, mi } = splitNoColonTime(digits);
+    return {
+      y: DEFAULT_YEAR,
+      mo: +mo,
+      d: +d,
+      h: applyAmPm(String(hRaw), ampm),
+      mi,
+      s: 0,
+    };
+  }
+
+  return null;
 }
 
 let workerPromise = null;
@@ -240,6 +268,27 @@ async function getPhotoTimeMs(file, token, fallbackTs) {
         }
       } catch (e) {
         // 2차 시도도 실패하면 아래에서 upload 시각으로 대체
+      }
+    }
+
+    // 그래도 실패하면, 문자 제한(화이트리스트) 없이 가장 가능성 높은 크롭으로 마지막 시도
+    if (!match) {
+      try {
+        await worker.setParameters({ tessedit_char_whitelist: "" });
+        const best = bands[0];
+        const retryText = await ocrCropRegion(worker, buf, width, height, best);
+        const match3 = parseTimestampText(retryText);
+        if (match3) {
+          match = match3;
+          text = retryText;
+        }
+      } catch (e) {
+        // 실패하면 아래에서 upload 시각으로 대체
+      } finally {
+        await worker.setParameters({
+          tessedit_char_whitelist:
+            "0123456789년월일시분초오전후요화수목금토():./ -",
+        });
       }
     }
 
