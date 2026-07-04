@@ -1,15 +1,23 @@
-{
-  "name": "workout-bot",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "weekly-report.js",
-  "scripts": {
-    "report": "node weekly-report.js"
-  },
-  "dependencies": {
-    "@slack/web-api": "^7.7.0",
-    "@notionhq/client": "^2.2.15",
-    "tesseract.js": "^5.1.1",
-    "sharp": "^0.33.5"
-  }
-}
+name: Weekly Workout Report
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: node weekly-report.js
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          REQUIRED_TIMES_PER_WEEK: "2"
