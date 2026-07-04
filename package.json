@@ -1,0 +1,14 @@
+{
+  "name": "workout-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "weekly-report.js",
+  "scripts": {
+    "report": "node weekly-report.js"
+  },
+  "dependencies": {
+    "@slack/web-api": "^7.7.0",
+    "@notionhq/client": "^2.2.15",
+    "tesseract.js": "^5.1.1"
+  }
+}
