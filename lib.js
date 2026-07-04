@@ -124,24 +124,29 @@ export async function closeOcrWorker() {
 // 타임스탬프 카메라 앱은 보통 사진 하단(왼쪽 또는 오른쪽)에 텍스트를 찍음.
 // 배경 사진 노이즈 때문에 OCR이 실패하는 걸 줄이기 위해, 하단 영역만 잘라내고
 // 확대 + 흑백 변환 + 대비 강화 + 이진화까지 해서 OCR 정확도를 높임.
-async function preprocessForOcr(buf) {
-  const image = sharp(buf);
-  const meta = await image.metadata();
+// 사진마다 타임스탬프 위치가 조금씩 다를 수 있어서(일반 사진 vs 스크린샷 등),
+// 하단 여러 범위를 순서대로 시도해서 그 중 하나라도 날짜/시간을 읽어내면 사용함.
+const CROP_TOP_FRACTIONS = [0.75, 0.6, 0.45, 0.3];
+
+async function ocrCropRegion(worker, buf, topFrac) {
+  const meta = await sharp(buf).metadata();
   const width = meta.width || 1000;
   const height = meta.height || 1000;
-
-  const cropTop = Math.floor(height * 0.45); // 하단 55% 영역 (날짜+시간 두 줄이 잘리지 않도록 여유있게)
+  const cropTop = Math.floor(height * topFrac);
   const cropHeight = height - cropTop;
-  const cropWidth = width;
 
-  return sharp(buf)
-    .extract({ left: 0, top: cropTop, width: cropWidth, height: cropHeight })
-    .resize({ width: cropWidth * 3 }) // 3배 확대
+  const processed = await sharp(buf)
+    .extract({ left: 0, top: cropTop, width, height: cropHeight })
+    .resize({ width: width * 2 }) // 2배 확대
     .grayscale()
-    .normalize() // 명암 대비 강화 (이진화는 이미지마다 밝기 편차가 있어 오히려 글자를 날릴 수 있어 제거함)
-    .sharpen() // 확대로 흐려진 경계를 선명하게
+    .normalize() // 명암 대비 강화 (이진화/과도한 선명화는 글자를 오히려 손상시켜서 사용 안 함)
     .png()
     .toBuffer();
+
+  const {
+    data: { text },
+  } = await worker.recognize(processed);
+  return text;
 }
 
 async function getPhotoTimeMs(file, token, fallbackTs) {
@@ -177,26 +182,26 @@ async function getPhotoTimeMs(file, token, fallbackTs) {
     const buf = Buffer.from(await res.arrayBuffer());
     const worker = await getOcrWorker();
 
-    // 1차 시도: 하단 영역 크롭 + 확대해서 OCR (배경 노이즈를 줄여 정확도를 높임)
+    // 여러 크롭 범위를 순서대로 시도 (사진마다 텍스트 위치가 다를 수 있어서)
     let text = "";
-    try {
-      const cropped = await preprocessForOcr(buf);
-      const result1 = await worker.recognize(cropped);
-      text = result1.data.text;
-    } catch (e) {
-      // 크롭 전처리 실패 시 아래에서 전체 이미지로 재시도
+    let match = null;
+    for (const frac of CROP_TOP_FRACTIONS) {
+      try {
+        text = await ocrCropRegion(worker, buf, frac);
+        match = parseTimestampText(text);
+        if (match) break;
+      } catch (e) {
+        // 이 크롭 범위 실패 -> 다음 범위 시도
+      }
     }
 
-    let match = parseTimestampText(text);
-
-    // 2차 시도: 크롭 영역이 텍스트를 놓쳤을 경우, 전체 이미지로 다시 OCR
+    // 모든 크롭 범위가 실패하면, 마지막으로 전체 이미지로 한 번 더 시도
     if (!match) {
       try {
         const fullImg = await sharp(buf)
           .grayscale()
           .normalize()
-          .sharpen()
-          .resize({ width: 2000, withoutEnlargement: false })
+          .resize({ width: 1600, withoutEnlargement: false })
           .png()
           .toBuffer();
         const result2 = await worker.recognize(fullImg);
