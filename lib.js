@@ -121,19 +121,40 @@ export async function closeOcrWorker() {
   }
 }
 
-// 타임스탬프 카메라 앱은 보통 사진 하단(왼쪽 또는 오른쪽)에 텍스트를 찍음.
-// 배경 사진 노이즈 때문에 OCR이 실패하는 걸 줄이기 위해, 하단 영역만 잘라내고
-// 확대 + 흑백 변환 + 대비 강화 + 이진화까지 해서 OCR 정확도를 높임.
-// 사진마다 타임스탬프 위치가 조금씩 다를 수 있어서(일반 사진 vs 스크린샷 등),
-// 하단 여러 범위를 순서대로 시도해서 그 중 하나라도 날짜/시간을 읽어내면 사용함.
-const CROP_TOP_FRACTIONS = [0.75, 0.6, 0.45, 0.3];
+// 일반 사진(가로세로 비율이 정사각형~약간 세로로 긴 정도)은 텍스트가 보통 하단에 있어서
+// "하단 N%" 형태로 여러 범위를 시도함.
+// 아이폰 스크린샷처럼 매우 세로로 긴 이미지(사진 미리보기 화면 전체를 캡처한 경우)는
+// 위/아래에 UI 여백(상태바, 공유·복사·저장 버튼 등)이 많아서 실제 텍스트는 중간 어딘가에 있음 ->
+// 중간 구간 위주로 별도 범위를 시도함.
+const NORMAL_BANDS = [
+  [0.82, 1],
+  [0.75, 1],
+  [0.68, 1],
+  [0.6, 1],
+  [0.5, 1],
+  [0.4, 1],
+  [0.3, 1],
+];
+const TALL_BANDS = [
+  [0.55, 0.85],
+  [0.45, 0.8],
+  [0.35, 0.7],
+  [0.6, 0.9],
+  [0.25, 0.6],
+];
 
-async function ocrCropRegion(worker, buf, topFrac) {
-  const meta = await sharp(buf).metadata();
-  const width = meta.width || 1000;
-  const height = meta.height || 1000;
+function getCandidateBands(width, height) {
+  const ratio = height / width;
+  if (ratio > 1.5) {
+    return [...TALL_BANDS, ...NORMAL_BANDS];
+  }
+  return NORMAL_BANDS;
+}
+
+async function ocrCropRegion(worker, buf, width, height, [topFrac, bottomFrac]) {
   const cropTop = Math.floor(height * topFrac);
-  const cropHeight = height - cropTop;
+  const cropBottom = Math.floor(height * bottomFrac);
+  const cropHeight = Math.max(cropBottom - cropTop, 1);
 
   const processed = await sharp(buf)
     .extract({ left: 0, top: cropTop, width, height: cropHeight })
@@ -182,12 +203,17 @@ async function getPhotoTimeMs(file, token, fallbackTs) {
     const buf = Buffer.from(await res.arrayBuffer());
     const worker = await getOcrWorker();
 
+    const meta = await sharp(buf).metadata();
+    const width = meta.width || 1000;
+    const height = meta.height || 1000;
+    const bands = getCandidateBands(width, height);
+
     // 여러 크롭 범위를 순서대로 시도 (사진마다 텍스트 위치가 다를 수 있어서)
     let text = "";
     let match = null;
-    for (const frac of CROP_TOP_FRACTIONS) {
+    for (const band of bands) {
       try {
-        text = await ocrCropRegion(worker, buf, frac);
+        text = await ocrCropRegion(worker, buf, width, height, band);
         match = parseTimestampText(text);
         if (match) break;
       } catch (e) {
