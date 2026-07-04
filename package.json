@@ -2,10 +2,10 @@
   "name": "workout-bot",
   "version": "1.0.0",
   "description": "슬랙 #운동인증 채널을 읽어서 주간 운동 미달자를 판별하고 Notion + Slack에 리포트하는 봇",
-  "main": "index.js",
+  "main": "weekly-report.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node weekly-report.js"
   },
   "dependencies": {
     "@slack/web-api": "^7.7.0",
