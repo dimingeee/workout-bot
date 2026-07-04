@@ -1,4 +1,5 @@
 import { createWorker } from "tesseract.js";
+import sharp from "sharp";
 
 const KST_TZ = "Asia/Seoul";
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -128,7 +129,17 @@ function parseTimestampText(text) {
 let workerPromise = null;
 
 async function getOcrWorker() {
-  workerPromise ??= createWorker(["eng", "kor"]);
+  if (!workerPromise) {
+    workerPromise = (async () => {
+      const worker = await createWorker(["eng", "kor"]);
+      // 타임스탬프에 나올 수 있는 글자만 허용해서 오인식을 줄임
+      await worker.setParameters({
+        tessedit_char_whitelist:
+          "0123456789년월일시분초오전후요화수목금토():./ -",
+      });
+      return worker;
+    })();
+  }
   return workerPromise;
 }
 
@@ -138,6 +149,29 @@ export async function closeOcrWorker() {
     await worker.terminate();
     workerPromise = null;
   }
+}
+
+// 타임스탬프 카메라 앱은 보통 사진 하단(왼쪽 또는 오른쪽)에 텍스트를 찍음.
+// 배경 사진 노이즈 때문에 OCR이 실패하는 걸 줄이기 위해, 하단 영역만 잘라내고
+// 확대 + 흑백 변환 + 대비 강화 + 이진화까지 해서 OCR 정확도를 높임.
+async function preprocessForOcr(buf) {
+  const image = sharp(buf);
+  const meta = await image.metadata();
+  const width = meta.width || 1000;
+  const height = meta.height || 1000;
+
+  const cropTop = Math.floor(height * 0.62); // 하단 38% 영역만 사용
+  const cropHeight = height - cropTop;
+  const cropWidth = Math.floor(width * 0.9);
+
+  return sharp(buf)
+    .extract({ left: 0, top: cropTop, width: cropWidth, height: cropHeight })
+    .resize({ width: cropWidth * 2 }) // 2배 확대
+    .grayscale()
+    .normalize() // 명암 대비 강화
+    .threshold(150) // 이진화 (밝은 글씨 vs 어두운 배경 분리)
+    .png()
+    .toBuffer();
 }
 
 async function getPhotoTimeMs(file, token, fallbackTs) {
@@ -173,9 +207,16 @@ async function getPhotoTimeMs(file, token, fallbackTs) {
     const buf = Buffer.from(await res.arrayBuffer());
     const worker = await getOcrWorker();
 
+    let ocrInput = buf;
+    try {
+      ocrInput = await preprocessForOcr(buf);
+    } catch (e) {
+      // 전처리 실패 시 원본 이미지로 OCR 시도
+    }
+
     const {
       data: { text },
-    } = await worker.recognize(buf);
+    } = await worker.recognize(ocrInput);
 
     const match = parseTimestampText(text);
 
