@@ -145,10 +145,13 @@ export function computeValidDays(events, minMinutes = 30) {
         continue;
       }
       const start = list[0].time;
-      const end = list[list.length - 1].time;
+      const end = list[list.length - 1].time; // Use the last photo time to get full duration
       const diffMinutes = (end - start) / 60000;
       if (diffMinutes >= minMinutes) {
         validDaysByUser[user] += 1;
+      } else {
+        // If photos exist but time difference is less than 30 mins, treat as insufficient time day
+        singleDays.push({ user, date, reason: `시간 미달 (${Math.round(diffMinutes)}분)` });
       }
     }
   }
