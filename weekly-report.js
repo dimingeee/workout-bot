@@ -4,13 +4,13 @@ import {
   getRosterUserIds,
   fetchPhotoEvents,
   computeValidDays,
-  closeOcrWorker,
   msToKstDateTime,
 } from "./lib.js";
 
 const {
   SLACK_BOT_TOKEN,
   SLACK_CHANNEL_ID,
+  ANTHROPIC_API_KEY,
   NOTION_API_KEY,
   NOTION_PAGE_ID,
   REQUIRED_TIMES_PER_WEEK = "2",
@@ -26,21 +26,30 @@ function kstToMs(year, month, day, hour = 0, minute = 0, second = 0) {
   return Date.UTC(year, month - 1, day, hour, minute, second) - KST_OFFSET_MS;
 }
 
-function getCustomRangeTs() {
+// 월요일 11시(KST)에 실행된다고 가정하고, "지난주 월요일 00:00 ~ 이번주 월요일 00:00(KST)" 구간(=지난주 한 주)을 반환
+function getLastWeekRangeTs() {
   const now = new Date();
+  const kstNow = new Date(now.getTime() + KST_OFFSET_MS);
+  const y = kstNow.getUTCFullYear();
+  const m = kstNow.getUTCMonth();
+  const d = kstNow.getUTCDate();
 
-  const slackFetchStart = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+  const todayMidnightKstAsUtcMs = Date.UTC(y, m, d, 0, 0, 0) - KST_OFFSET_MS;
 
-  const targetStartMs = kstToMs(2026, 6, 22, 0, 0, 0);
-  const targetEndMs = kstToMs(2026, 7, 6, 0, 0, 0);
+  const end = todayMidnightKstAsUtcMs;
+  const start = end - 7 * 24 * 60 * 60 * 1000;
+
+  // 슬랙 조회 범위는 늦게 올리는 경우를 대비해 2주 더 넓게 잡고,
+  // 실제 판별은 targetStartMs~targetEndMs(지난주)로 한정함
+  const slackFetchStart = start - 14 * 24 * 60 * 60 * 1000;
 
   return {
     oldest: (slackFetchStart / 1000).toString(),
     latest: (now.getTime() / 1000).toString(),
-    targetStartMs,
-    targetEndMs,
-    startDate: new Date(targetStartMs),
-    endDate: new Date(targetEndMs - 1000),
+    targetStartMs: start,
+    targetEndMs: end,
+    startDate: new Date(start),
+    endDate: new Date(end - 1000),
   };
 }
 
@@ -60,8 +69,6 @@ function buildEventLog(events) {
     reason: e.reason,
     fileName: e.fileName,
     uploadTimeKst: e.uploadTime ? msToKstDateTime(e.uploadTime) : "",
-    ocrText: e.ocrText,
-    ...(e.source === "upload" && e.attempts ? { attempts: e.attempts } : {}),
   }));
 }
 
@@ -69,9 +76,12 @@ async function main() {
   if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID) {
     throw new Error("SLACK_BOT_TOKEN 또는 SLACK_CHANNEL_ID가 비어 있습니다.");
   }
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY가 비어 있습니다.");
+  }
 
   const { oldest, latest, targetStartMs, targetEndMs, startDate, endDate } =
-    getCustomRangeTs();
+    getLastWeekRangeTs();
 
   const roster = await getRosterUserIds(slack, SLACK_CHANNEL_ID);
 
@@ -79,6 +89,7 @@ async function main() {
   const allEvents = await fetchPhotoEvents(
     slack,
     SLACK_BOT_TOKEN,
+    ANTHROPIC_API_KEY,
     SLACK_CHANNEL_ID,
     oldest,
     latest
@@ -90,7 +101,7 @@ async function main() {
     (e) => e.time >= targetStartMs && e.time < targetEndMs
   );
 
-  console.log(`타겟 기간(6/22~7/5) 내 필터링된 사진 수: ${filteredEvents.length}개`);
+  console.log(`지난주 기간 내 필터링된 사진 수: ${filteredEvents.length}개`);
   console.log("수집 이벤트 상세:", JSON.stringify(buildEventLog(filteredEvents), null, 2));
 
   const { validDaysByUser, singleDays } = computeValidDays(filteredEvents, 30);
@@ -104,18 +115,17 @@ async function main() {
     ? missed
         .map((u) => `• <@${u.id}> — ${validDaysByUser[u.id] || 0}/${REQUIRED}회`)
         .join("\n")
-    : "이번 기간은 전원 완료했어요 🎉";
+    : "이번 주는 전원 완료했어요 🎉";
 
   const passedText =
-    passed.map((u) => `• <@${u.id}> — ${validDaysByUser[u.id] || 0}회`).join("\n") ||
-    "-";
+    passed.map((u) => `• <@${u.id}> — ${validDaysByUser[u.id] || 0}회`).join("\n") || "-";
 
   const singleNoteLines = singleDays.map((s) => {
     return `• <@${s.user}> — ${s.date} (${s.reason}, 인정 안 됨)`;
   });
 
   const slackMsg = [
-    `*📋 운동 인증 리포트 (테스트 기간: ${dateLabel})*`,
+    `*📋 주간 운동 리포트 (${dateLabel})*`,
     "",
     `*미달자 (${missed.length}명)*`,
     missedText,
@@ -123,7 +133,7 @@ async function main() {
     `*완료자 (${passed.length}명)*`,
     passedText,
     ...(singleNoteLines.length
-      ? ["", "*⚠️ 미인정 사유 내역 (참고)*", singleNoteLines.join("\n")]
+      ? ["", "*⚠️ 참고 (인정 안 된 날짜)*", singleNoteLines.join("\n")]
       : []),
   ].join("\n");
 
@@ -141,9 +151,7 @@ async function main() {
           {
             object: "block",
             type: "heading_2",
-            heading_2: {
-              rich_text: [{ text: { content: `${dateLabel} 리포트` } }],
-            },
+            heading_2: { rich_text: [{ text: { content: `${dateLabel} 주간 리포트` } }] },
           },
           {
             object: "block",
@@ -161,6 +169,15 @@ async function main() {
               ],
             },
           },
+          {
+            object: "block",
+            type: "paragraph",
+            paragraph: {
+              rich_text: [
+                { text: { content: `완료: ${passed.map((u) => u.name).join(", ") || "-"}` } },
+              ],
+            },
+          },
         ],
       });
     } catch (e) {
@@ -171,13 +188,10 @@ async function main() {
   console.log("리포트 전송 완료");
   console.log("최종 완료자:", passed.map((u) => u.name));
   console.log("최종 미달자:", missed.map((u) => u.name));
-  console.log("미인정 내역:", singleDays);
-
-  await closeOcrWorker();
+  console.log("참고(인정 안 된 날짜):", singleDays);
 }
 
-main().catch(async (err) => {
+main().catch((err) => {
   console.error(err);
-  await closeOcrWorker();
   process.exit(1);
 });
