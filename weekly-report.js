@@ -23,22 +23,31 @@ const END_OF_WEEK_GRACE_MS = 6 * 60 * 60 * 1000; // 자정 넘긴 세션의 종�
 const slack = new WebClient(SLACK_BOT_TOKEN);
 const notion = NOTION_API_KEY ? new NotionClient({ auth: NOTION_API_KEY }) : null;
 
+const { TEST_AS_OF_DATE } = process.env;
+
 function kstToMs(year, month, day, hour = 0, minute = 0, second = 0) {
   return Date.UTC(year, month - 1, day, hour, minute, second) - KST_OFFSET_MS;
 }
 
-// 월요일 11시(KST)에 실행된다고 가정하고, "지난주 월요일 00:00 ~ 이번주 월요일 00:00(KST)" 구간(=지난주 한 주)을 반환
+// "지난주 월요일 00:00 ~ 이번주 월요일 00:00(KST)" 구간(=지난주 한 주)을 반환.
+// 어느 요일에 실행하든 항상 정확한 월~일 경계를 계산함 (TEST_AS_OF_DATE로 기준일을 강제할 수 있음 - 테스트용)
 function getLastWeekRangeTs() {
   const now = new Date();
-  const kstNow = new Date(now.getTime() + KST_OFFSET_MS);
-  const y = kstNow.getUTCFullYear();
-  const m = kstNow.getUTCMonth();
-  const d = kstNow.getUTCDate();
+  const asOf = TEST_AS_OF_DATE ? new Date(`${TEST_AS_OF_DATE}T12:00:00+09:00`) : now;
+
+  const kstAsOf = new Date(asOf.getTime() + KST_OFFSET_MS);
+  const y = kstAsOf.getUTCFullYear();
+  const m = kstAsOf.getUTCMonth();
+  const d = kstAsOf.getUTCDate();
+  const weekday = kstAsOf.getUTCDay(); // 0=일, 1=월, ..., 6=토
 
   const todayMidnightKstAsUtcMs = Date.UTC(y, m, d, 0, 0, 0) - KST_OFFSET_MS;
+  const daysSinceMonday = (weekday + 6) % 7; // 월=0, 화=1, ..., 일=6
 
-  const end = todayMidnightKstAsUtcMs;
-  const start = end - 7 * 24 * 60 * 60 * 1000;
+  const thisMondayMidnightMs = todayMidnightKstAsUtcMs - daysSinceMonday * 24 * 60 * 60 * 1000;
+
+  const end = thisMondayMidnightMs; // 이번주 월요일 00:00 KST (미포함 경계) = 지난주가 끝나는 지점
+  const start = end - 7 * 24 * 60 * 60 * 1000; // 지난주 월요일 00:00 KST
 
   // 슬랙 조회 범위는 늦게 올리는 경우를 대비해 2주 더 넓게 잡고,
   // 실제 판별은 targetStartMs~targetEndMs(지난주)로 한정함
