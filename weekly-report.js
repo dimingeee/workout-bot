@@ -18,6 +18,7 @@ const {
 
 const REQUIRED = parseInt(REQUIRED_TIMES_PER_WEEK, 10);
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const END_OF_WEEK_GRACE_MS = 6 * 60 * 60 * 1000; // 자정 넘긴 세션의 종료 사진이 다음주로 밀려나가지 않도록 여유를 둠
 
 const slack = new WebClient(SLACK_BOT_TOKEN);
 const notion = NOTION_API_KEY ? new NotionClient({ auth: NOTION_API_KEY }) : null;
@@ -98,7 +99,7 @@ async function main() {
   console.log(`총 수집된 사진 이벤트 수: ${allEvents.length}개`);
 
   const filteredEvents = allEvents.filter(
-    (e) => e.time >= targetStartMs && e.time < targetEndMs
+    (e) => e.time >= targetStartMs && e.time < targetEndMs + END_OF_WEEK_GRACE_MS
   );
 
   console.log(`지난주 기간 내 필터링된 사진 수: ${filteredEvents.length}개`);

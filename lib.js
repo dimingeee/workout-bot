@@ -224,7 +224,7 @@ export async function fetchPhotoEvents(
   return events;
 }
 
-export function computeValidDays(events, minMinutes = 30) {
+export function computeValidDays(events, minMinutes = 30, maxSessionMinutes = 360) {
   const byUserDate = {};
 
   for (const e of events) {
@@ -241,15 +241,13 @@ export function computeValidDays(events, minMinutes = 30) {
   for (const [user, dates] of Object.entries(byUserDate)) {
     validDaysByUser[user] = 0;
 
+    // 1차: 같은 날짜 안에서 짝이 맞는 경우부터 처리. 1장만 있는 날짜는 자정 넘김 여부를 나중에 확인하기 위해 따로 모아둠
+    const singletons = [];
     for (const [date, list] of Object.entries(dates)) {
       list.sort((a, b) => a.time - b.time);
 
       if (list.length === 1) {
-        singleDays.push({
-          user,
-          date,
-          reason: "사진 1장만 확인됨",
-        });
+        singletons.push({ date, time: list[0].time });
         continue;
       }
 
@@ -267,6 +265,35 @@ export function computeValidDays(events, minMinutes = 30) {
         });
       }
     }
+
+    // 2차: 서로 다른 날짜에 하나씩 남은 사진들이 자정을 넘긴 하나의 운동(시작~끝)인지 확인
+    singletons.sort((a, b) => a.time - b.time);
+    const consumed = new Set();
+
+    for (let i = 0; i < singletons.length - 1; i++) {
+      if (consumed.has(i)) continue;
+
+      const cur = singletons[i];
+      const next = singletons[i + 1];
+      const diffMinutes = (next.time - cur.time) / 60000;
+
+      // 날짜가 다르고, 간격이 30분~6시간 사이면 자정을 넘긴 하나의 세션으로 인정
+      if (cur.date !== next.date && diffMinutes >= minMinutes && diffMinutes <= maxSessionMinutes) {
+        validDaysByUser[user] += 1;
+        consumed.add(i);
+        consumed.add(i + 1);
+      }
+    }
+
+    singletons.forEach((s, idx) => {
+      if (!consumed.has(idx)) {
+        singleDays.push({
+          user,
+          date: s.date,
+          reason: "사진 1장만 확인됨",
+        });
+      }
+    });
   }
 
   return { validDaysByUser, singleDays };
