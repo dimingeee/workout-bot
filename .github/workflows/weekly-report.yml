@@ -26,5 +26,5 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-          REQUIRED_TIMES_PER_WEEK: "2"
+          REQUIRED_TIMES_PER_WEEK: "3"
           TEST_AS_OF_DATE: ${{ inputs.test_as_of_date }}

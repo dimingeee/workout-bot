@@ -13,7 +13,7 @@ const {
   ANTHROPIC_API_KEY,
   NOTION_API_KEY,
   NOTION_PAGE_ID,
-  REQUIRED_TIMES_PER_WEEK = "2",
+  REQUIRED_TIMES_PER_WEEK = "3",
 } = process.env;
 
 const REQUIRED = parseInt(REQUIRED_TIMES_PER_WEEK, 10);
@@ -114,10 +114,18 @@ async function main() {
   console.log(`지난주 기간 내 필터링된 사진 수: ${filteredEvents.length}개`);
   console.log("수집 이벤트 상세:", JSON.stringify(buildEventLog(filteredEvents), null, 2));
 
-  const { validDaysByUser, singleDays } = computeValidDays(filteredEvents, 30);
+  const { validDaysByUser, singleDays } = computeValidDays(filteredEvents, 40);
 
   const missed = roster.filter((u) => (validDaysByUser[u.id] || 0) < REQUIRED);
   const passed = roster.filter((u) => (validDaysByUser[u.id] || 0) >= REQUIRED);
+
+  // 이번 주 인정 횟수 기준 순위 (많이 한 순서, 동점자는 이름순)
+  const ranking = [...roster]
+    .sort((a, b) => {
+      const diff = (validDaysByUser[b.id] || 0) - (validDaysByUser[a.id] || 0);
+      return diff !== 0 ? diff : a.name.localeCompare(b.name, "ko");
+    })
+    .map((u, idx) => ({ ...u, count: validDaysByUser[u.id] || 0, rank: idx + 1 }));
 
   const dateLabel = `${formatKstMonthDay(startDate)} ~ ${formatKstMonthDay(endDate)}`;
 
@@ -134,10 +142,21 @@ async function main() {
     return `• <@${s.user}> — ${s.date} (${s.reason}, 인정 안 됨)`;
   });
 
+  const medals = ["🥇", "🥈", "🥉"];
+  const rankingText = ranking
+    .map((u) => {
+      const medal = medals[u.rank - 1] || `${u.rank}.`;
+      return `${medal} <@${u.id}> — ${u.count}회`;
+    })
+    .join("\n");
+
   const slackMsg = [
     `*📋 주간 운동 리포트 (${dateLabel})*`,
     "",
-    `*미달자 (${missed.length}명)*`,
+    `*🏆 이번 주 순위*`,
+    rankingText,
+    "",
+    `*미달자 (${missed.length}명, ${REQUIRED}회 미만)*`,
     missedText,
     "",
     `*완료자 (${passed.length}명)*`,
@@ -162,6 +181,21 @@ async function main() {
             object: "block",
             type: "heading_2",
             heading_2: { rich_text: [{ text: { content: `${dateLabel} 주간 리포트` } }] },
+          },
+          {
+            object: "block",
+            type: "paragraph",
+            paragraph: {
+              rich_text: [
+                {
+                  text: {
+                    content: `순위: ${ranking
+                      .map((u) => `${u.rank}. ${u.name} (${u.count}회)`)
+                      .join(", ")}`,
+                  },
+                },
+              ],
+            },
           },
           {
             object: "block",
