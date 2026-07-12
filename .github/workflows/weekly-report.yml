@@ -9,6 +9,11 @@ on:
         description: "테스트용: 이 날짜가 '오늘'인 것처럼 계산 (예: 2026-07-06). 비워두면 실제 오늘 날짜 사용"
         required: false
         type: string
+      dry_run:
+        description: "체크하면 슬랙/Notion에는 아무것도 올리지 않고, 결과를 이 Actions 로그에서만 확인합니다"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   report:
@@ -28,3 +33,4 @@ jobs:
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           REQUIRED_TIMES_PER_WEEK: "3"
           TEST_AS_OF_DATE: ${{ inputs.test_as_of_date }}
+          DRY_RUN: ${{ inputs.dry_run }}

@@ -14,7 +14,10 @@ const {
   NOTION_API_KEY,
   NOTION_PAGE_ID,
   REQUIRED_TIMES_PER_WEEK = "3",
+  DRY_RUN = "false",
 } = process.env;
+
+const IS_DRY_RUN = DRY_RUN === "true";
 
 const REQUIRED = parseInt(REQUIRED_TIMES_PER_WEEK, 10);
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -165,6 +168,17 @@ async function main() {
       ? ["", "*⚠️ 참고 (인정 안 된 날짜)*", singleNoteLines.join("\n")]
       : []),
   ].join("\n");
+
+  if (IS_DRY_RUN) {
+    console.log("\n========== DRY_RUN: 슬랙/Notion에는 올리지 않고 결과만 출력합니다 ==========\n");
+    console.log(slackMsg);
+    console.log("\n===========================================================================\n");
+    console.log("리포트 미리보기 완료 (DRY_RUN)");
+    console.log("최종 완료자:", passed.map((u) => u.name));
+    console.log("최종 미달자:", missed.map((u) => u.name));
+    console.log("참고(인정 안 된 날짜):", singleDays);
+    return;
+  }
 
   await slack.chat.postMessage({
     channel: SLACK_CHANNEL_ID,
