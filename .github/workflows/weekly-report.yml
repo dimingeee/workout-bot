@@ -2,7 +2,7 @@ name: Weekly Workout Report
 
 on:
   schedule:
-    - cron: "0 2 * * 1"
+    - cron: "0 0 * * 1" # 매주 월요일 09:00 KST (00:00 UTC)
   workflow_dispatch:
     inputs:
       test_as_of_date:
@@ -34,3 +34,4 @@ jobs:
           REQUIRED_TIMES_PER_WEEK: "3"
           TEST_AS_OF_DATE: ${{ inputs.test_as_of_date }}
           DRY_RUN: ${{ inputs.dry_run }}
+          POST_TO_SLACK: "false"

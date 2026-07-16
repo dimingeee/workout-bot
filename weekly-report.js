@@ -15,9 +15,11 @@ const {
   NOTION_PAGE_ID,
   REQUIRED_TIMES_PER_WEEK = "3",
   DRY_RUN = "false",
+  POST_TO_SLACK = "false",
 } = process.env;
 
 const IS_DRY_RUN = DRY_RUN === "true";
+const SHOULD_POST_TO_SLACK = POST_TO_SLACK === "true";
 
 const REQUIRED = parseInt(REQUIRED_TIMES_PER_WEEK, 10);
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -180,11 +182,15 @@ async function main() {
     return;
   }
 
-  await slack.chat.postMessage({
-    channel: SLACK_CHANNEL_ID,
-    text: slackMsg,
-    unfurl_links: false,
-  });
+  if (SHOULD_POST_TO_SLACK) {
+    await slack.chat.postMessage({
+      channel: SLACK_CHANNEL_ID,
+      text: slackMsg,
+      unfurl_links: false,
+    });
+  } else {
+    console.log("POST_TO_SLACK=false 라서 슬랙에는 올리지 않습니다. (Notion에만 기록)");
+  }
 
   if (notion && NOTION_PAGE_ID) {
     try {
